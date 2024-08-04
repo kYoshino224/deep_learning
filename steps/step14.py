@@ -25,21 +25,34 @@ class Variable:
         funcs = [self.creater]
         while funcs:
             func = funcs.pop()
-            x, y = func.input, func.output
-            x.grad = func.backward(y.grad)
-            if x.creater is not None:
-                funcs.append(x.creater)
+            gys = [output.grad for output in func.outputs]
+            gxs = func.backward(*gys)
+            if not isinstance(gxs, tuple):
+                gxs = (gxs, )
+
+            for x, gx in zip(func.inputs, gxs):
+                if x.grad is None:
+                    x.grad = gx
+                else:
+                    x.grad = x.grad + gx
+                if x.creater is not None:
+                    funcs.append(x.creater)
+
+    def clear_grad(self):
+        self.grad = None
         
 class Function:
-    def __call__(self, inputs):
-        xs = np.array([x.data for x in inputs])
-        ys  = self.forward(xs)
+    def __call__(self, *inputs):
+        xs = [x.data for x in inputs]
+        ys  = self.forward(*xs)
+        if not isinstance(ys, tuple):
+            ys = (ys, )
         outputs = [Variable(as_array(y)) for y in ys]
         for output in outputs:
             output.set_creater(self)
         self.inputs = inputs # Keep the input variable
         self.outputs = outputs
-        return outputs
+        return outputs if len(outputs) > 1 else outputs[0]
     
     def forward(self, x):
         raise NotImplementedError()
@@ -52,7 +65,7 @@ class Square(Function):
     def forward(self, x):
         return x ** 2
     def backward(self, gy):
-        x = self.input.data
+        x = self.inputs[0].data
         return 2 * x * gy
 def square(x):
     return Square()(x)  
@@ -63,23 +76,24 @@ class Exp(Function):
     def backward(self, gy):
         x = self.input.data
         return np.exp(x) * gy
-def exp(xs):
-    return Exp()(xs)
+def exp(x):
+    return Exp()(x)
 
 class Add(Function):
-    def forward(self, xs):
-        x0, x1 = xs
+    def forward(self, x0, x1):
         y = x0 + x1
         return (y, )
-def add(x):
-    return Add()(x)
+    def backward(self, gy):
+        return gy, gy
+def add(x0, x1):
+    return Add()(x0, x1)
 
-def numerical_diff(f, x, eps=1e-4):
-    x0 = Variable(x.data + eps)
-    x1 = Variable(x.data  - eps)
-    return (f(x0).data - f(x1).data) / (2 * eps)
-
-
-x0 = [Variable(np.array(1)), Variable(np.array(4))]
-ys = add(x0)
-print(ys[0].data)
+# Testing
+x = Variable(np.array([2.0]))
+y = add(x, x)
+y.backward()
+print(x.grad)
+x.clear_grad()
+y = add(add(x, x), x)
+y.backward()
+print(x.grad)
